@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
@@ -13,6 +14,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  */
 contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	using Address for address;
+	using Math for uint256;
 	/**
 	 * @dev Error thrown when invalid fee percentages are provided.
 	 * @param fixedProjectFeePercentage The fee percentage for fixed projects
@@ -41,6 +43,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 * @param isAccreditedInvestor Boolean indicating if the investor is accredited
 	 */
 	error NotAccreditedInvestor(address investor, bool isAccreditedInvestor);
+
+
+	error InvalidRequestedGoalAmount(uint256 requested, uint256 min, uint256 max);
 
 	/**
 	 * @dev Struct representing a crowdfunding project.
@@ -122,7 +127,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	}
 
 	// Mappings to store project and investor data
-	mapping(uint256 => Project) public projects; // projectId => Project
+	mapping(uint256 projectId => Project project) public projects; // projectId => Project
 	mapping(uint256 => mapping(address => Investor)) public projectInvestors; // projectId => investorAddress => Investor
 	mapping(uint256 => address[]) public projectInvestorsList; // projectId => investorAddress[];
 	mapping(uint256 => mapping(address => bool)) private hasInvested; // projectId => investorAddress => hasInvested
@@ -262,7 +267,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 * @param amount Amount of refund claimed.
 	 */
 
-	event RefundInitiated(uint256 projectId, address to, uint amount);
+	event RefundInitiated(uint256 projectId, address to, uint256 amount);
 
 	/**
 	 * @dev Emitted when refund has claimed
@@ -489,11 +494,12 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		RepaymentFrequency repaymentFrequency
 	) external onlyOwner {
 		require(creator != address(0), "Invalid creator address");
-		require(
-			requestedFunding >= _minRequestAmount &&
-				requestedFunding <= _maxRequestAmount,
-			"Invalid requested goal amount"
-		);
+		if(
+			requestedFunding < _minRequestAmount ||
+				requestedFunding > _maxRequestAmount
+			
+		) 
+		revert InvalidRequestedGoalAmount(requestedFunding, _minRequestAmount, _maxRequestAmount);
 		require(
 			minInvestmentValue >= _minProjectInvestment,
 			"Invalid minimum investment value"
@@ -509,7 +515,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 				endDate <= (block.timestamp + _maxDays),
 			"Invalid end date"
 		);
-		uint256 pricePerShare;
+		uint256 pricePerShare = 0;
 		if (dealType == InvestmentDealType.Debt) {
 			require(
 				interestRate >= _minInterestRate &&
@@ -810,8 +816,10 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			project.repaymentFrequency
 		);
 
+		uint256 arrayLength = projectInvestorsList[projectId].length;
+
 		// Update each investor's claim status and increment their available installments to claim
-		for (uint256 i = 0; i < projectInvestorsList[projectId].length; i++) {
+		for (uint256 i = 0; i < arrayLength; i++) {
 			remainingInstallmentsToClaim[projectId][
 				projectInvestorsList[projectId][i]
 			]++;
@@ -1296,10 +1304,14 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			"Unable to set project status before time"
 		);
 
+
+
 		if (project.isFixedProject && project.fundingReceived > 0) {
+
+			uint256 arrayLength = projectInvestorsList[projectId].length;
 			for (
 				uint256 i = 0;
-				i < projectInvestorsList[projectId].length;
+				i < arrayLength;
 				i++
 			) {
 				investorRefundAmount[
@@ -1940,9 +1952,11 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 investmentAmount,
 		uint256 repaymentInstallmentAmount
 	) public pure returns (uint256) {
-		uint256 percentage = (investmentAmount * 10e4) / totalFunding; // Using 10000 to handle two decimal places
-		uint256 investorShare = (repaymentInstallmentAmount * percentage) /
-			10000;
+		
+		// uint256 percentage = (investmentAmount * 10000) / totalFunding; // Using 10000 to handle two decimal places
+		uint256 percentage = Math.mulDiv(investmentAmount, 10000, totalFunding); // Using 10000 to handle two decimal places
+		uint256 investorShare = Math.mulDiv(repaymentInstallmentAmount, percentage ,
+			10000);
 		return investorShare; // This will return the percentage multiplied by 100 (for 2 decimal precision)
 	}
 
