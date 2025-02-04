@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Context.sol";
 
 /**
  * @title EquityCrowdfunding
@@ -404,7 +405,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 sellerProcessingFeesPercentage,
 		uint256 buyerProcessingFeesPercentage,
 		address defender
-	) Ownable(msg.sender) {
+	) Ownable(_msgSender()) {
 		require(defender != address(0), "invalid defender address");
 
 		if (
@@ -456,7 +457,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 */
 	modifier onlyOwnerAndDefender() {
 		require(
-			msg.sender == owner() || msg.sender == _defender,
+			_msgSender() == owner() || _msgSender() == _defender,
 			"Caller is not the owner or defender"
 		);
 		_;
@@ -594,14 +595,14 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	) external payable nonReentrant {
 		// Load the project and investor data into memory.
 		Project storage project = projects[projectId];
-		Investor storage investor = projectInvestors[projectId][msg.sender];
+		Investor storage investor = projectInvestors[projectId][_msgSender()];
 
 		// Ensure that the project exists.
 		require(project.creator != address(0), "Project does not exist");
 
 		// Prevent the project creator from investing in their own project.
 		require(
-			msg.sender != project.creator,
+			_msgSender() != project.creator,
 			"Project creator is not allowed to invest"
 		);
 		// Ensure the project is active and within the funding period.
@@ -628,7 +629,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		// If the project is restricted to accredited investors, enforce accreditation.
 		if (project.isForAccreditedInvestor) {
 			if (!isAccreditedInvestor)
-				revert NotAccreditedInvestor(msg.sender, isAccreditedInvestor);
+				revert NotAccreditedInvestor(_msgSender(), isAccreditedInvestor);
 		}
 
 		if (project.dealType == InvestmentDealType.Equity) {
@@ -646,9 +647,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		}
 
 		// If the investor hasn't invested before, add them to the project's investor list.
-		if (!hasInvested[projectId][msg.sender]) {
-			projectInvestorsList[projectId].push(msg.sender); // Track first-time investors
-			hasInvested[projectId][msg.sender] = true; // Mark the investor as having invested
+		if (!hasInvested[projectId][_msgSender()]) {
+			projectInvestorsList[projectId].push(_msgSender()); // Track first-time investors
+			hasInvested[projectId][_msgSender()] = true; // Mark the investor as having invested
 		}
 
 		project.avaliableShare -= purchaseShare;
@@ -667,7 +668,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 
 		// Emit an event indicating that the investment was made.
 		emit InvestmentMade(
-			msg.sender,
+			_msgSender(),
 			projectId,
 			investmentAmount,
 			purchaseShare,
@@ -691,7 +692,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		Project storage project = projects[projectId];
 
 		// Ensure the caller is the project creator
-		require(msg.sender == project.creator, "Only creator can claim");
+		require(_msgSender() == project.creator, "Only creator can claim");
 
 		// Check the project status based on whether it's fixed or flexible
 		if (project.isFixedProject) {
@@ -709,7 +710,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 
 		// Ensure the investment has not already been claimed
 		require(
-			!hasClaimInvestment[projectId][msg.sender],
+			!hasClaimInvestment[projectId][_msgSender()],
 			"Investment already claimed"
 		);
 
@@ -732,7 +733,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 withdrawableBalance = totalInvestment - adminCharges;
 
 		// Mark the investment as claimed for the creator
-		hasClaimInvestment[projectId][msg.sender] = true;
+		hasClaimInvestment[projectId][_msgSender()] = true;
 
 		if (project.dealType == InvestmentDealType.Debt) {
 			// Set the remaining repayment amount including interest
@@ -753,11 +754,11 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		earnings[owner()] += adminCharges;
 
 		// Transfer the withdrawable balance to the project creator
-		// payable(msg.sender).transfer(withdrawableBalance);
-		Address.sendValue(payable(msg.sender), withdrawableBalance);
+		// payable(_msgSender()).transfer(withdrawableBalance);
+		Address.sendValue(payable(_msgSender()), withdrawableBalance);
 
 		// Emit an event indicating the investment has been claimed
-		emit InvestmentClaimed(projectId, msg.sender, withdrawableBalance);
+		emit InvestmentClaimed(projectId, _msgSender(), withdrawableBalance);
 	}
 
 	/**
@@ -779,7 +780,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		Project storage project = projects[projectId];
 
 		// Ensure that the caller is the project creator
-		require(msg.sender == project.creator, "Only creator can process");
+		require(_msgSender() == project.creator, "Only creator can process");
 
 		require(
 			project.dealType == InvestmentDealType.Debt,
@@ -794,7 +795,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 
 		// Ensure the project creator has claimed the initial investment
 		require(
-			hasClaimInvestment[projectId][msg.sender],
+			hasClaimInvestment[projectId][_msgSender()],
 			"Project creator has not claimed investment yet"
 		);
 
@@ -843,7 +844,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 projectId
 	) external {
 		Project storage project = projects[projectId];
-		Investor storage investor = projectInvestors[projectId][msg.sender];
+		Investor storage investor = projectInvestors[projectId][_msgSender()];
 		OnSellDetail storage sellDetail = onSellDetails[referenceId];
 
 		require(
@@ -864,7 +865,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			"Requested shares are unavaliable"
 		);
 		investor.purchasedShare -= numberOfShareOnSell;
-		sellDetail.seller = msg.sender;
+		sellDetail.seller = _msgSender();
 		sellDetail.numberOfSharesOnSell = numberOfShareOnSell;
 		sellDetail.pricePerShare = pricePerShare;
 		sellDetail.projectId = projectId;
@@ -878,7 +879,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			numberOfShareOnSell,
 			pricePerShare,
 			projectId,
-			msg.sender,
+			_msgSender(),
 			sellDetail.status
 		);
 	}
@@ -890,7 +891,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		OnSellDetail storage sellDetails = onSellDetails[referenceId];
 		Project storage project = projects[sellDetails.projectId];
 		Investor storage investor = projectInvestors[sellDetails.projectId][
-			msg.sender
+			_msgSender()
 		];
 
 		require(isSellRequestExists(referenceId), "Sell Request not exists");
@@ -899,7 +900,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			"Sell not active yet"
 		);
 		require(
-			msg.sender != project.creator,
+			_msgSender() != project.creator,
 			"Project Owner cannot buys shares"
 		);
 		require(
@@ -936,19 +937,19 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			referenceId,
 			shareQuantity,
 			sellDetails.projectId,
-			msg.sender,
+			_msgSender(),
 			sellDetails.status
 		);
 	}
 
 	function withSoldShareEarnings(uint160 referenceId) external nonReentrant {
 		OnSellDetail storage sellDetail = onSellDetails[referenceId];
-		uint256 totalPurchaseAmount = sellerEarnings[msg.sender][referenceId];
+		uint256 totalPurchaseAmount = sellerEarnings[_msgSender()][referenceId];
 
 		require(isSellRequestExists(referenceId), "Sell Request is not exist");
 
 		require(
-			sellDetail.seller == msg.sender,
+			sellDetail.seller == _msgSender(),
 			"You are unauthorized seller."
 		);
 
@@ -970,10 +971,10 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 
 		uint256 withdrawableAmount = totalPurchaseAmount - adminCharges;
 
-		sellerEarnings[msg.sender][referenceId] = 0;
+		sellerEarnings[_msgSender()][referenceId] = 0;
 		earnings[owner()] += adminCharges;
 
-		Address.sendValue(payable(msg.sender), withdrawableAmount);
+		Address.sendValue(payable(_msgSender()), withdrawableAmount);
 	}
 
 	/**
@@ -996,20 +997,20 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	function withdrawRepayment(uint256 projectId) external nonReentrant {
 		// Load the project and investor data into memory
 		Project storage project = projects[projectId];
-		Investor storage investor = projectInvestors[projectId][msg.sender];
+		Investor storage investor = projectInvestors[projectId][_msgSender()];
 
 		// Ensure the caller is an investor in the project
-		require(hasInvested[projectId][msg.sender], "you are not an Investor");
+		require(hasInvested[projectId][_msgSender()], "you are not an Investor");
 
 		// Ensure the investor has not already claimed this repayment installment
 		require(
-			!hasClaimInvestment[projectId][msg.sender],
+			!hasClaimInvestment[projectId][_msgSender()],
 			"you have already claimed your amount"
 		);
 
 		// Ensure the investor has at least one installment to claim
 		require(
-			remainingInstallmentsToClaim[projectId][msg.sender] > 0,
+			remainingInstallmentsToClaim[projectId][_msgSender()] > 0,
 			"you have already claimed your amount"
 		);
 
@@ -1018,27 +1019,27 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			project.fundingReceived,
 			investor.amountInvested,
 			project.repaymentInstallmentAmount
-		) * remainingInstallmentsToClaim[projectId][msg.sender];
+		) * remainingInstallmentsToClaim[projectId][_msgSender()];
 		// Calculate the platform fees (admin charges) for the investor
 		uint256 adminCharges = calculateInvestorFee(investorShare) *
-			remainingInstallmentsToClaim[projectId][msg.sender];
+			remainingInstallmentsToClaim[projectId][_msgSender()];
 
 		// Calculate the withdrawable balance for the investor after deducting admin charges
 		uint256 withdrawableBalance = investorShare - adminCharges;
 		// Mark the investment claim as completed for this installment
-		hasClaimInvestment[projectId][msg.sender] = true;
+		hasClaimInvestment[projectId][_msgSender()] = true;
 
 		// Reset the remaining installments for the investor
-		remainingInstallmentsToClaim[projectId][msg.sender] = 0;
+		remainingInstallmentsToClaim[projectId][_msgSender()] = 0;
 
 		// Add the admin charges to the platform owner's earnings
 		earnings[owner()] += adminCharges;
 
 		// Transfer the withdrawable balance to the investor
-		Address.sendValue(payable(msg.sender), withdrawableBalance);
+		Address.sendValue(payable(_msgSender()), withdrawableBalance);
 
 		// Emit an event indicating the earnings were claimed
-		emit ClaimedRepayment(projectId, msg.sender, withdrawableBalance);
+		emit ClaimedRepayment(projectId, _msgSender(), withdrawableBalance);
 	}
 
 	/**
@@ -1357,16 +1358,16 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			"Invalid project"
 		);
 		require(
-			investorRefundAmount[msg.sender] > 0,
+			investorRefundAmount[_msgSender()] > 0,
 			"Already withdraw refund"
 		);
 
-		uint256 refundAmount = investorRefundAmount[msg.sender];
+		uint256 refundAmount = investorRefundAmount[_msgSender()];
 
-		investorRefundAmount[msg.sender] = 0;
+		investorRefundAmount[_msgSender()] = 0;
 
-		Address.sendValue(payable(msg.sender), refundAmount);
-		emit WithdrawRefund(projectId, msg.sender, refundAmount);
+		Address.sendValue(payable(_msgSender()), refundAmount);
+		emit WithdrawRefund(projectId, _msgSender(), refundAmount);
 	}
 
 	/**
@@ -1662,7 +1663,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		Address.sendValue(payable(owner()), withdrawableBalance);
 
 		// Emit an event indicating the earnings were withdrawn
-		emit ClaimedEarnings(msg.sender, withdrawableBalance);
+		emit ClaimedEarnings(_msgSender(), withdrawableBalance);
 	}
 
 	/**
