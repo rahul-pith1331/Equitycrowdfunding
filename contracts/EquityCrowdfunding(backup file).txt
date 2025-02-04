@@ -1,0 +1,648 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import '@openzeppelin/contracts/access/Ownable.sol';
+import '@openzeppelin/contracts/utils/ReentrancyGuard.sol';
+
+contract EquityCrowdfunding is Ownable, ReentrancyGuard {
+	error InvalidFeesPercentage(
+		uint256 fixedProjectFeePercentage,
+		uint256 flexibleSuccessfulProjectFeePercentage,
+		uint256 flexibleUnSuccessfulProjectFeePercentage,
+		uint256 investorFeePercentage,
+		uint256 gatewayFeePercentage
+	);
+
+	error NotAccreditedInvestor(address investor, bool isAccreditedInvestor);
+
+	struct Project {
+		address creator;
+		string name;
+		uint256 endDate;
+		uint256 minInvestmentValue;
+		uint256 maxInvestmentValue;
+		uint256 requestedFunding;
+		uint256 fundingReceived;
+		uint256 remainingRepaymentAmount;
+		uint256 repaymentInstallmentAmount;
+		uint256 interestRate;
+		uint256 termLength;
+		uint256 repaymentDate;
+		bool isFixedProject;
+		bool isForAccreditedInvestor;
+		ProjectStatus projectStatus;
+		RepaymentFrequency repaymentFrequency;
+	}
+
+	struct Investor {
+		uint256 amountInvested;
+		uint256 claimedInvestment;
+		bool isAccreditedInvestor;
+	}
+
+	enum ProjectStatus {
+		Active,
+		Inactive,
+		Successful,
+		Unsuccessful
+	}
+
+	enum RepaymentFrequency {
+		Yearly,
+		Quarterly,
+		Monthly,
+		Daily
+	}
+
+	mapping(uint256 => Project) public projects; // projectId => Project
+	mapping(uint256 => mapping(address => Investor)) public projectInvestors; // projectId => investorAddress => Investor
+	mapping(uint256 => address[]) public projectInvestorsList; // projectId => investorAddress[];
+	mapping(uint256 => mapping(address => bool)) private hasInvested; // projectId => investorAddress => hasInvested
+	mapping(uint256 => mapping(address => bool)) public hasClaimInvestment; // projectId => creatorAddress => hasClaimedInvestment
+	mapping(uint256 => mapping(address => bool)) public hasClaimRepayment; // projectId => investorAddress => hasClaimedRepayment
+	mapping(uint256 => mapping(address => uint256))
+		public remainingInstallmentsToClaim; //  projectId => investorAddress => remainingInstallmentsToClaim;
+	mapping(address => uint) public earnings;
+
+	uint256 private _fixedProjectFeePercentage;
+	uint256 private _fixedProjectFeeAmount;
+	uint256 private _flexibleSuccesfulProjectFeePercentage;
+	uint256 private _flexibleSuccessfulProjectFeeAmount;
+	uint256 private _flexibleUnSuccessfulProjectFeePercentage;
+	uint256 private _flexibleUnsuccessfulProjectFeeAmount;
+	uint256 private _investorFeePercentage;
+	uint256 private _investorFeeAmount;
+	uint256 private _gatewayFeePercentage;
+	uint256 private _gatewayFeeAmount;
+	uint256 private _projectId;
+	uint256 public MIN_PROJECT_INVESTMENT = 4195185185962071 wei;
+
+	address private _defender;
+
+	event InvestmentProjectCreated(
+		address creator,
+		uint256 projectId,
+		uint256 requestedFunding,
+		uint256 startDate,
+		uint256 endDate,
+		RepaymentFrequency repaymentFrequency
+	);
+
+	event ProjectStatusUpdated(uint256 projectId, ProjectStatus projectStatus);
+
+	event PlateformFeesUpdated(
+		uint256 _fixedProjectFeePercentage,
+		uint256 _fixedProjectFeeAmount,
+		uint256 _flexibleSuccessfulProjectFeePercentage,
+		uint256 _flexibleSuccessfulProjectFeeAmount,
+		uint256 _flexibleUnSuccessfulProjectFeePercentage,
+		uint256 _flexibleUnsuccessfulProjectFeeAmount,
+		uint256 _investorFeePercentage,
+		uint256 _investorFeeAmount,
+		uint256 _gatewayFeePercentage,
+		uint256 _gatewayFeeAmount
+	);
+
+	event InvestmentMade(
+		address indexed investor,
+		uint256 projectId,
+		uint256 investmentAmount
+	);
+
+	event RepaymentProcessed(
+		uint256 projectId,
+		uint256 amount,
+		uint256 nextRepaymentDate
+	);
+
+	event ClaimedEarnings(address indexed withDrawer, uint256 amount);
+
+	event InvestmentClaimed(uint256 projectId, address creator, uint256 amount);
+
+	constructor(
+		uint256 fixedProjectFeePercentage,
+		uint256 fixedProjectFeeAmount,
+		uint256 flexibleSuccessfulProjectFeePercentage,
+		uint256 flexibleSuccessfulProjectFeeAmount,
+		uint256 flexibleUnSuccessfulProjectFeePercentage,
+		uint256 flexibleUnsuccessfulProjectFeeAmount,
+		uint256 investorFeePercentage,
+		uint256 investorFeeAmount,
+		uint256 gatewayFeePercentage,
+		uint256 gatewayFeeAmount,
+		address defender
+	) Ownable(msg.sender) {
+		require(defender != address(0), 'invalid defender address');
+
+		if (
+			fixedProjectFeePercentage > 10000 &&
+			flexibleSuccessfulProjectFeePercentage > 10000 &&
+			flexibleUnSuccessfulProjectFeePercentage > 10000 &&
+			investorFeePercentage > 10000 &&
+			gatewayFeePercentage > 10000
+		)
+			revert InvalidFeesPercentage(
+				fixedProjectFeePercentage,
+				flexibleSuccessfulProjectFeePercentage,
+				flexibleUnSuccessfulProjectFeePercentage,
+				investorFeePercentage,
+				gatewayFeePercentage
+			);
+
+		_fixedProjectFeePercentage = fixedProjectFeePercentage;
+		_fixedProjectFeeAmount = fixedProjectFeeAmount;
+		_flexibleSuccesfulProjectFeePercentage = flexibleSuccessfulProjectFeePercentage;
+		_flexibleSuccessfulProjectFeeAmount = flexibleSuccessfulProjectFeeAmount;
+		_flexibleUnSuccessfulProjectFeePercentage = flexibleUnSuccessfulProjectFeePercentage;
+		_flexibleUnsuccessfulProjectFeeAmount = flexibleUnsuccessfulProjectFeeAmount;
+		_investorFeePercentage = investorFeePercentage;
+		_investorFeeAmount = investorFeeAmount;
+		_gatewayFeePercentage = gatewayFeePercentage;
+		_gatewayFeeAmount = gatewayFeeAmount;
+		_defender = defender;
+	}
+
+	modifier onlyOwnerAndDefender() {
+		require(
+			msg.sender == owner() || msg.sender == _defender,
+			'Caller is not the owner or defender'
+		);
+		_;
+	}
+
+	function createproject(
+		address creator,
+		string memory name,
+		uint256 endDate,
+		uint256 minInvestmentValue,
+		uint256 maxInvestmentValue,
+		uint256 requestedFunding,
+		uint256 interestRate,
+		uint256 termLength,
+		uint256 repaymentDate,
+		bool isFixedProject,
+		bool isForAccreditedInvestor,
+		RepaymentFrequency repaymentFrequency
+	) external onlyOwner {
+		require(creator != address(0), 'Invalid creator address');
+		require(
+			interestRate >= 500 && interestRate <= 1500,
+			'Invalid interest rate'
+		);
+		require(endDate >= block.timestamp + 1 days, 'Invalid end date');
+		require(termLength >= 5 && termLength <= 15, 'Invalid term length');
+		require(
+			repaymentDate >= block.timestamp + 30 days,
+			'invalid repayment date'
+		);
+		require(
+			minInvestmentValue >= MIN_PROJECT_INVESTMENT,
+			'Invalid minimum investment value'
+		);
+		require(
+			maxInvestmentValue <= requestedFunding,
+			'Invalid max investment value'
+		);
+		_projectId++;
+		projects[_projectId] = Project(
+			creator,
+			name,
+			endDate,
+			minInvestmentValue,
+			maxInvestmentValue,
+			requestedFunding,
+			0,
+			0,
+			0,
+			interestRate,
+			termLength,
+			repaymentDate,
+			isFixedProject,
+			isForAccreditedInvestor,
+			ProjectStatus.Active,
+			repaymentFrequency
+		);
+
+		emit InvestmentProjectCreated(
+			creator,
+			_projectId,
+			requestedFunding,
+			endDate,
+			repaymentDate,
+			repaymentFrequency
+		);
+	}
+
+	function investInProject(
+		uint256 projectId,
+		bool isAccreditedInvestor
+	) external payable nonReentrant {
+		Project storage project = projects[projectId];
+		Investor storage investor = projectInvestors[projectId][msg.sender];
+
+		require(project.creator != address(0), 'Project does not exist');
+
+		require(
+			msg.sender != project.creator,
+			'Project creator is not allowed to invest'
+		);
+
+		require(
+			project.projectStatus == ProjectStatus.Active &&
+				block.timestamp <= project.endDate,
+			'Project is not active or closed'
+		);
+
+		uint256 investmentAmount = msg.value;
+		require(
+			investmentAmount >= project.minInvestmentValue,
+			'Investment is below minimum value'
+		);
+		require(
+			investmentAmount <= project.maxInvestmentValue,
+			'Investment is above maximum value'
+		);
+
+		if (project.isForAccreditedInvestor) {
+			if (!isAccreditedInvestor)
+				revert NotAccreditedInvestor(msg.sender, isAccreditedInvestor);
+		}
+
+		if (!hasInvested[projectId][msg.sender]) {
+			projectInvestorsList[projectId].push(msg.sender); // Increment the count if it's the first investment by this address
+			hasInvested[projectId][msg.sender] = true; // Mark the investor as having invested
+		}
+
+
+		investor.amountInvested += investmentAmount;
+		investor.isAccreditedInvestor = isAccreditedInvestor;
+
+		project.fundingReceived += investmentAmount;
+		project.fundingReceived += investmentAmount;
+		
+		if (project.fundingReceived >= project.requestedFunding) {
+			setProjectStatusSuccessful(projectId);
+		}
+
+		emit InvestmentMade(msg.sender, projectId, investmentAmount);
+	}
+
+	function claimInvestment(uint256 projectId) external nonReentrant {
+		Project storage project = projects[projectId];
+
+		require(msg.sender == project.creator, 'Only creator can claim');
+
+		if (project.isFixedProject)
+			require(
+				project.projectStatus == ProjectStatus.Successful,
+				'Project is unsuccessful'
+			);
+		else
+			require(
+				block.timestamp >= project.endDate ||
+					project.projectStatus == ProjectStatus.Successful,
+				'Project is open or unsuccessful'
+			);
+		require(
+			!hasClaimInvestment[projectId][msg.sender],
+			'investment already claimed'
+		);
+
+		uint256 totalInvestment = project.fundingReceived;
+
+		uint256 adminCharges = calculatePlatformFees(
+			project.fundingReceived,
+			project.isFixedProject,
+			project.projectStatus,
+			projectInvestorsList[projectId].length
+		) +
+			calculateGatewayFee(
+				project.fundingReceived,
+				projectInvestorsList[projectId].length
+			);
+
+		uint256 withdrawableBalance = totalInvestment - adminCharges;
+
+		hasClaimInvestment[projectId][msg.sender] = true;
+		project.remainingRepaymentAmount =
+			project.fundingReceived +
+			project.interestRate /
+			10000;
+
+		project.repaymentInstallmentAmount = calculateRepaymentInstallment(
+			project.fundingReceived,
+			project.interestRate,
+			project.termLength
+		);
+
+		earnings[owner()] += adminCharges;
+		payable(msg.sender).transfer(withdrawableBalance);
+
+		emit InvestmentClaimed(projectId, msg.sender, withdrawableBalance);
+	}
+
+	function processRepaymentInstallment(
+		uint projectId
+	) external payable nonReentrant {
+		Project storage project = projects[projectId];
+
+		require(msg.sender == project.creator, 'Only creator can process');
+		require(
+			block.timestamp >= project.repaymentDate,
+			'Repayment is not due yet'
+		);
+
+		require(
+			hasClaimInvestment[projectId][msg.sender],
+			'Project creator has not claimed investment yet'
+		);
+
+		require(project.remainingRepaymentAmount > 0, 'No remaining repayment');
+
+		require(
+			msg.value >= project.repaymentInstallmentAmount,
+			'Repayment amount is insufficient'
+		);
+
+		project.remainingRepaymentAmount -= project.repaymentInstallmentAmount;
+
+		project.repaymentDate = getNextPaymentDate(
+			project.repaymentDate,
+			project.repaymentFrequency
+		);
+
+		for (uint256 i = 0; i < projectInvestorsList[projectId].length; i++) {
+			remainingInstallmentsToClaim[projectId][
+				projectInvestorsList[projectId][i]
+			]++;
+			hasClaimInvestment[projectId][
+				projectInvestorsList[projectId][i]
+			] = false;
+		}
+
+		emit RepaymentProcessed(
+			projectId,
+			project.repaymentInstallmentAmount,
+			project.repaymentDate
+		);
+	}
+
+	function withdrawRepayment(uint256 projectId) external nonReentrant {
+		Project storage project = projects[projectId];
+		Investor storage investor = projectInvestors[projectId][msg.sender];
+
+		require(hasInvested[projectId][msg.sender], 'you are not an Investor');
+		require(
+			!hasClaimInvestment[projectId][msg.sender],
+			'you have already claimed your amount'
+		);
+		require(
+			remainingInstallmentsToClaim[projectId][msg.sender] > 0,
+			'you have already claimed your amount'
+		);
+
+		uint256 investorShare = calculateInvestmentRepaymentShare(
+			project.fundingReceived,
+			investor.amountInvested,
+			project.repaymentInstallmentAmount
+		);
+
+		uint256 adminCharges = calculateInvestorFee(investorShare) *
+			remainingInstallmentsToClaim[projectId][msg.sender];
+
+		uint256 withdrawableBalance = (investorShare *
+			remainingInstallmentsToClaim[projectId][msg.sender]) - adminCharges;
+
+		hasClaimInvestment[projectId][msg.sender] = true;
+		remainingInstallmentsToClaim[projectId][msg.sender] = 0;
+		earnings[owner()] += adminCharges;
+		payable(msg.sender).transfer(withdrawableBalance);
+
+		emit ClaimedEarnings(msg.sender, withdrawableBalance);
+	}
+
+	function setPlatformFees(
+		uint256 fixedProjectFeePercentage,
+		uint256 fixedProjectFeeAmount,
+		uint256 flexibleSuccessfulProjectFeePercentage,
+		uint256 flexibleSuccessfulProjectFeeAmount,
+		uint256 flexibleUnSuccessfulProjectFeePercentage,
+		uint256 flexibleUnsuccessfulProjectFeeAmount,
+		uint256 investorFeePercentage,
+		uint256 investorFeeAmount,
+		uint256 gatewayFeePercentage,
+		uint256 gatewayFeeAmount
+	) external onlyOwner {
+		if (
+			fixedProjectFeePercentage > 10000 ||
+			flexibleSuccessfulProjectFeePercentage > 10000 ||
+			flexibleUnSuccessfulProjectFeePercentage > 10000 ||
+			investorFeePercentage > 10000 ||
+			gatewayFeePercentage > 10000
+		) {
+			revert InvalidFeesPercentage(
+				fixedProjectFeePercentage,
+				flexibleSuccessfulProjectFeePercentage,
+				flexibleUnSuccessfulProjectFeePercentage,
+				investorFeePercentage,
+				gatewayFeePercentage
+			);
+		}
+
+		_fixedProjectFeePercentage = fixedProjectFeePercentage;
+		_fixedProjectFeeAmount = fixedProjectFeeAmount;
+		_flexibleSuccesfulProjectFeePercentage = flexibleSuccessfulProjectFeePercentage;
+		_flexibleSuccessfulProjectFeeAmount = flexibleSuccessfulProjectFeeAmount;
+		_flexibleUnSuccessfulProjectFeePercentage = flexibleUnSuccessfulProjectFeePercentage;
+		_flexibleUnsuccessfulProjectFeeAmount = flexibleUnsuccessfulProjectFeeAmount;
+		_investorFeePercentage = investorFeePercentage;
+		_investorFeeAmount = investorFeeAmount;
+		_gatewayFeeAmount = gatewayFeeAmount;
+		_gatewayFeePercentage = gatewayFeePercentage;
+
+		emit PlateformFeesUpdated(
+			fixedProjectFeePercentage,
+			fixedProjectFeeAmount,
+			flexibleSuccessfulProjectFeePercentage,
+			flexibleSuccessfulProjectFeeAmount,
+			flexibleUnSuccessfulProjectFeePercentage,
+			flexibleUnsuccessfulProjectFeeAmount,
+			investorFeePercentage,
+			investorFeeAmount,
+			gatewayFeePercentage,
+			gatewayFeeAmount
+		);
+	}
+
+	function setProjectStatusInactive(uint256 projectId) external onlyOwner {
+		Project storage project = projects[projectId];
+
+		require(project.creator != address(0), 'Project does not exist');
+
+		require(
+			project.projectStatus == ProjectStatus.Active,
+			'Project is already successful/unsuccessful/Inactive'
+		);
+
+		project.projectStatus = ProjectStatus.Inactive;
+
+		emit ProjectStatusUpdated(projectId, project.projectStatus);
+	}
+
+	function setProjectStatusUnsuccessful(
+		uint256 projectId
+	) external onlyOwnerAndDefender {
+		Project storage project = projects[projectId];
+		require(
+			project.projectStatus == ProjectStatus.Active,
+			'Project is successful/unsuccessful/inactive'
+		);
+
+		require(
+			block.timestamp >= project.endDate,
+			'Unable to set project status before time'
+		);
+
+		require(
+			project.fundingReceived < project.requestedFunding,
+			'Project received it requested amount'
+		);
+
+		project.projectStatus = ProjectStatus.Unsuccessful;
+		emit ProjectStatusUpdated(projectId, project.projectStatus);
+	}
+
+	function updateDefender(address defender) external onlyOwner {
+		require(defender != address(0), 'Defender cannot be zero address');
+
+		_defender = defender;
+	}
+
+	function withdrawEarning() external onlyOwner nonReentrant {
+		uint256 withdrawableBalance = earnings[owner()];
+		require(withdrawableBalance > 0, 'No earnings to withdraw');
+		earnings[owner()] = 0;
+		payable(owner()).transfer(withdrawableBalance);
+
+		emit ClaimedEarnings(msg.sender, withdrawableBalance);
+	}
+
+	function getPlatformfees()
+		external
+		view
+		returns (
+			uint256 fixedProjectFeeAmount,
+			uint256 fixedProjectFeePercentage,
+			uint256 flexibleSuccessfulProjectFeeAmount,
+			uint256 flexibleSuccessfulProjectFeePercentage,
+			uint256 flexibleUnsuccessfulProjectFeeAmount,
+			uint256 flexibleUnSuccessfulProjectFeePercentage,
+			uint256 investorFeeAmount,
+			uint256 investorFeePercentage,
+			uint256 gatewayFeeAmount,
+			uint256 gatewayFeePercentage
+		)
+	{
+		return (
+			_fixedProjectFeeAmount,
+			_fixedProjectFeePercentage,
+			_flexibleSuccesfulProjectFeePercentage,
+			_flexibleSuccessfulProjectFeeAmount,
+			_flexibleUnsuccessfulProjectFeeAmount,
+			_flexibleUnSuccessfulProjectFeePercentage,
+			_investorFeeAmount,
+			_investorFeePercentage,
+			_gatewayFeeAmount,
+			_gatewayFeePercentage
+		);
+	}
+
+	function getNextPaymentDate(
+		uint256 _currentDate,
+		RepaymentFrequency _frequency
+	) public pure returns (uint256) {
+		if (_frequency == RepaymentFrequency.Yearly) {
+			return _currentDate + 365 days;
+		} else if (_frequency == RepaymentFrequency.Quarterly) {
+			return _currentDate + 91 days;
+		} else if (_frequency == RepaymentFrequency.Monthly) {
+			return _currentDate + 30 days;
+		} else {
+			return _currentDate + 1 days;
+		}
+	}
+
+	function calculatePlatformFees(
+		uint256 fundingReceived,
+		bool _isFixedProject,
+		ProjectStatus projectStatus,
+		uint256 investorCount
+	) public view returns (uint256) {
+		uint256 platformPercentage;
+		uint256 platformAmount;
+
+		if (_isFixedProject) {
+			platformPercentage = _fixedProjectFeePercentage;
+			platformAmount = _fixedProjectFeeAmount;
+		} else {
+			if (projectStatus == ProjectStatus.Successful) {
+				platformPercentage = _flexibleSuccesfulProjectFeePercentage;
+				platformAmount = _flexibleSuccessfulProjectFeeAmount;
+			} else {
+				platformPercentage = _flexibleUnSuccessfulProjectFeePercentage;
+				platformAmount = _flexibleUnsuccessfulProjectFeeAmount;
+			}
+		}
+
+		uint platformfee = ((fundingReceived * platformPercentage) / 10000) +
+			(platformAmount * investorCount);
+
+		return platformfee;
+	}
+
+	function calculateGatewayFee(
+		uint256 fundingReceived,
+		uint256 investorCount
+	) public view returns (uint256) {
+		uint256 gatewayFee = ((fundingReceived * _gatewayFeePercentage) /
+			10000) + (_gatewayFeeAmount * investorCount);
+
+		return gatewayFee;
+	}
+
+	function calculateInvestorFee(
+		uint256 investorShareAmount
+	) public view returns (uint256) {
+		uint256 investorFee = ((investorShareAmount * _investorFeePercentage) /
+			10000) + _investorFeeAmount;
+		return investorFee;
+	}
+
+	function calculateRepaymentInstallment(
+		uint fundingRecived,
+		uint256 interestRate,
+		uint256 termlength
+	) public pure returns (uint256) {
+		uint256 repaymentAmount = (fundingRecived + interestRate / 10000) /
+			termlength;
+
+		return repaymentAmount;
+	}
+
+	function calculateInvestmentRepaymentShare(
+		uint256 totalFunding,
+		uint256 investmentAmount,
+		uint256 repaymentInstallmentAmount
+	) public pure returns (uint256) {
+		uint256 percentage = (investmentAmount * 10000) / totalFunding; // Using 10000 to handle two decimal places
+		uint256 investorShare = (repaymentInstallmentAmount * percentage) /
+			10000;
+		return investorShare; // This will return the percentage multiplied by 100 (for 2 decimal precision)
+	}
+
+	function setProjectStatusSuccessful(uint256 projectId) private {
+		Project storage project = projects[projectId];
+		project.projectStatus = ProjectStatus.Successful;
+		emit ProjectStatusUpdated(projectId, project.projectStatus);
+	}
+}
