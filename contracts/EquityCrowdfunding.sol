@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title EquityCrowdfunding
@@ -11,6 +12,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  * and handles the repayment process.
  */
 contract EquityCrowdfunding is Ownable, ReentrancyGuard {
+	using Address for address;
 	/**
 	 * @dev Error thrown when invalid fee percentages are provided.
 	 * @param fixedProjectFeePercentage The fee percentage for fixed projects
@@ -745,7 +747,8 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		earnings[owner()] += adminCharges;
 
 		// Transfer the withdrawable balance to the project creator
-		payable(msg.sender).transfer(withdrawableBalance);
+		// payable(msg.sender).transfer(withdrawableBalance);
+		Address.sendValue(payable(msg.sender), withdrawableBalance);
 
 		// Emit an event indicating the investment has been claimed
 		emit InvestmentClaimed(projectId, msg.sender, withdrawableBalance);
@@ -962,7 +965,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		sellerEarnings[msg.sender][referenceId] = 0;
 		earnings[owner()] += adminCharges;
 
-		payable(msg.sender).transfer(withdrawableAmount);
+		Address.sendValue(payable(msg.sender), withdrawableAmount);
 	}
 
 	/**
@@ -1024,7 +1027,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		earnings[owner()] += adminCharges;
 
 		// Transfer the withdrawable balance to the investor
-		payable(msg.sender).transfer(withdrawableBalance);
+		Address.sendValue(payable(msg.sender), withdrawableBalance);
 
 		// Emit an event indicating the earnings were claimed
 		emit ClaimedRepayment(projectId, msg.sender, withdrawableBalance);
@@ -1350,7 +1353,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 
 		investorRefundAmount[msg.sender] = 0;
 
-		payable(msg.sender).transfer(refundAmount);
+		Address.sendValue(payable(msg.sender), refundAmount);
 		emit WithdrawRefund(projectId, msg.sender, refundAmount);
 	}
 
@@ -1644,7 +1647,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		earnings[owner()] = 0;
 
 		// Transfer the withdrawable balance to the owner
-		payable(owner()).transfer(withdrawableBalance);
+		Address.sendValue(payable(owner()), withdrawableBalance);
 
 		// Emit an event indicating the earnings were withdrawn
 		emit ClaimedEarnings(msg.sender, withdrawableBalance);
