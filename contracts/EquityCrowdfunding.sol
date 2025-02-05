@@ -595,7 +595,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			pricePerShare = requestedFunding / avaliableShare;
 		}
 
-		_projectId++;
+		unchecked {
+			_projectId++;
+		}
 		projects[_projectId] = Project(
 			creator,
 			name,
@@ -881,13 +883,19 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 arrayLength = projectInvestorsList[projectId].length;
 
 		// Update each investor's claim status and increment their available installments to claim
-		for (uint256 i = 1; i <= arrayLength; ++i) {
-			++remainingInstallmentsToClaim[projectId][
-				projectInvestorsList[projectId][i]
-			];
+		for (uint256 i = 1; i <= arrayLength; ) {
+			unchecked {
+				remainingInstallmentsToClaim[projectId][
+					projectInvestorsList[projectId][i]
+				]++;
+			}
 			hasClaimInvestment[projectId][
 				projectInvestorsList[projectId][i]
 			] = false;
+
+			unchecked {
+				i++;
+			}
 		}
 
 		// Emit an event indicating the repayment has been processed
@@ -1371,7 +1379,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 
 		if (project.isFixedProject && project.fundingReceived > 0) {
 			uint256 arrayLength = projectInvestorsList[projectId].length;
-			for (uint256 i = 1; i <= arrayLength; ++i) {
+			for (uint256 i = 1; i <= arrayLength; ) {
 				investorRefundAmount[
 					projectInvestorsList[projectId][i]
 				] += projectInvestors[projectId][
@@ -1394,11 +1402,16 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 				hasInvested[projectId][
 					projectInvestorsList[projectId][i]
 				] = false;
+
 				emit RefundInitiated(
 					projectId,
 					projectInvestorsList[projectId][i],
 					investorRefundAmount[projectInvestorsList[projectId][i]]
 				);
+
+				unchecked {
+					i++;
+				}
 			}
 		}
 
@@ -1887,7 +1900,8 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			}
 		}
 
-		 platformfee = ((fundingReceived * platformPercentage) / 10000) +
+		platformfee =
+			((fundingReceived * platformPercentage) / 10000) +
 			(platformAmount * investorCount);
 
 		return platformfee;
@@ -1910,8 +1924,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 fundingReceived,
 		uint256 investorCount
 	) public view returns (uint256 gatewayFee) {
-		 gatewayFee = ((fundingReceived * _gatewayFeePercentage) /
-			10000) + (_gatewayFeeAmount * investorCount);
+		gatewayFee =
+			((fundingReceived * _gatewayFeePercentage) / 10000) +
+			(_gatewayFeeAmount * investorCount);
 
 		return gatewayFee;
 	}
@@ -1932,8 +1947,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	function calculateInvestorFee(
 		uint256 investorShareAmount
 	) public view returns (uint256 investorFee) {
-		 investorFee = ((investorShareAmount * _investorFeePercentage) /
-			10000) + _investorFeeAmount;
+		investorFee =
+			((investorShareAmount * _investorFeePercentage) / 10000) +
+			_investorFeeAmount;
 		return investorFee;
 	}
 
@@ -1997,8 +2013,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 interestRate,
 		uint256 termLength
 	) public pure returns (uint256 repaymentAmount) {
-		repaymentAmount = (fundingReceived +
-			((fundingReceived * interestRate) / 10000)) / termLength;
+		repaymentAmount =
+			(fundingReceived + ((fundingReceived * interestRate) / 10000)) /
+			termLength;
 
 		return repaymentAmount;
 	}
@@ -2060,7 +2077,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 length = investors.length;
 		bool found;
 
-		for (uint256 i = 1; i <= length; ++i) {
+		for (uint256 i = 1; i <= length; ) {
 			if (investors[i] == investor) {
 				found = true;
 
@@ -2068,6 +2085,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 				investors[i] = investors[length - 1];
 				investors.pop(); // Remove the last element
 				break;
+			}
+			unchecked {
+				i++;
 			}
 		}
 
@@ -2143,14 +2163,14 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		return (minGoalAmount, maxGoalAmount);
 	}
 
-	function getDefenderAddress() external view returns (address) {
-		return _defender;
+	function getDefenderAddress() external view returns (address defender) {
+		return defender = _defender;
 	}
 
 	function isSellRequestExists(
 		uint160 referenceId
-	) private view returns (bool) {
-		return onSellDetails[referenceId].seller != address(0);
+	) private view returns (bool isExist) {
+		return isExist = onSellDetails[referenceId].seller != address(0);
 	}
 
 	// Receive Ether function to handle plain Ether transfers
