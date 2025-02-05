@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Context.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Context} from "@openzeppelin/contracts/utils/Context.sol";
 
 /**
  * @title EquityCrowdfunding
  * @dev A smart contract for managing equity crowdfunding projects.
+ * @custom:security-contact info@rockersinfo.com
  * This contract allows project creators to raise funds, investors to invest in projects,
  * and handles the repayment process.
  */
@@ -45,8 +46,18 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 */
 	error NotAccreditedInvestor(address investor, bool isAccreditedInvestor);
 
+	/**
+	 * @dev Error thrown when a non-accredited investor tries to invest in a project for accredited investors only.
+	 * @param requested requested goal amount for investment project
+	 * @param min minimum amount goal amount limit for requesting investment amount
+	 * @param max maximum amount goal amount limit for requesting investment amount
+	 */
 
-	error InvalidRequestedGoalAmount(uint256 requested, uint256 min, uint256 max);
+	error InvalidRequestedGoalAmount(
+		uint256 requested,
+		uint256 min,
+		uint256 max
+	);
 
 	/**
 	 * @dev Struct representing a crowdfunding project.
@@ -82,7 +93,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		bool isAccreditedInvestor;
 		uint256 purchasedShare;
 	}
-
+	/**
+	 * @dev Struct representing a sell detail of shares.
+	 */
 	struct OnSellDetail {
 		uint216 numberOfSharesOnSell;
 		uint216 numberOfSharesSold;
@@ -114,10 +127,18 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		Daily
 	}
 
+	/**
+	 * @dev Enum representing the deal type of investment project.
+	 */
+
 	enum InvestmentDealType {
 		Debt, //0
 		Equity //1
 	}
+
+	/**
+	 * @dev Enum representing the status of sell request.
+	 */
 
 	enum SellStatus {
 		UnderReview, //0
@@ -127,24 +148,58 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		Closed //4
 	}
 
-	// Mappings to store project and investor data
-	mapping(uint256 projectId => Project project) public projects; // projectId => Project
-	mapping(uint256 => mapping(address => Investor)) public projectInvestors; // projectId => investorAddress => Investor
-	mapping(uint256 => address[]) public projectInvestorsList; // projectId => investorAddress[];
-	mapping(uint256 => mapping(address => bool)) private hasInvested; // projectId => investorAddress => hasInvested
-	mapping(uint256 => mapping(address => bool)) public hasClaimInvestment; // projectId => creatorAddress => hasClaimedInvestment
-	mapping(uint256 => mapping(address => bool)) public hasClaimRepayment; // projectId => investorAddress => hasClaimedRepayment
-	mapping(uint256 => mapping(address => uint256))
-		public remainingInstallmentsToClaim; //  projectId => investorAddress => remainingInstallmentsToClaim;
-	mapping(address => uint256) public earnings;
-	mapping(address => uint256) public investorRefundAmount; // projectId => investorAddress => refundAmount
-	mapping(uint160 => OnSellDetail) public onSellDetails; // referenceId => OnsellDetail
-	mapping(address => mapping(uint160 => uint256)) public sellerEarnings;
+	/// @notice Stores details of each crowdfunding project.
+	/// @dev Maps a project ID to a `Project` struct containing project details.
+	mapping(uint256 projectId => Project project) public projects;
 
+	/// @notice Tracks investment details of investors in each project.
+	/// @dev Maps a project ID and an investor's address to an `Investor` struct.
+	mapping(uint256 projectId => mapping(address investorAddress => Investor investor))
+		public projectInvestors;
+
+	/// @notice Stores a list of all investors for each project.
+	/// @dev Maps a project ID to an array of investor addresses.
+	mapping(uint256 projectId => address[] projectInvestors)
+		public projectInvestorsList;
+
+	/// @notice Keeps track of whether an investor has already invested in a project.
+	/// @dev Maps a project ID and an investor's address to a boolean indicating investment status.
+	mapping(uint256 projectId => mapping(address investorAddress => bool isInvested))
+		private hasInvested;
+
+	/// @notice Tracks whether a project's creator has claimed the investment.
+	/// @dev Maps a project ID and creator's address to a boolean indicating claim status.
+	mapping(uint256 projectId => mapping(address creatorAddress => bool isInvestmentClaimed))
+		public hasClaimInvestment;
+
+	/// @notice Stores the remaining installment amount for each investor to claim.
+	/// @dev Maps a project ID and investor's address to the amount of installments left to claim.
+	mapping(uint256 projectId => mapping(address investorAddress => uint256 remainingInstallmentAmount))
+		public remainingInstallmentsToClaim;
+
+	/// @notice Tracks the total earnings of a project owner.
+	/// @dev Maps an owner's address to their total withdrawal amount.
+	mapping(address ownerAdddress => uint256 withdrawalAmount) public earnings;
+
+	/// @notice Stores refund amounts for investors.
+	/// @dev Maps an investor's address to the amount they are eligible to receive as a refund.
+	mapping(address investorAddress => uint256 refundAmount)
+		public investorRefundAmount;
+
+	/// @notice Stores details of shares or equity that are on sale.
+	/// @dev Maps a reference ID to an `OnSellDetail` struct containing details of the sale.
+	mapping(uint160 referenceId => OnSellDetail sellDetail)
+		public onSellDetails;
+
+	/// @notice Tracks earnings from sales for each seller.
+	/// @dev Maps a seller's address and reference ID to the earnings from the sale.
+	mapping(address seller => mapping(uint160 referenceId => uint256 earnings))
+		public sellerEarnings;
+
+	// Private variables for fee calculations
 	bool private _isSellerSuccessFeesEnable;
 	bool private _isAutoApproveEnable;
 
-	// Private variables for fee calculations
 	uint256 private _fixedProjectFeePercentage;
 	uint256 private _fixedProjectFeeAmount;
 	uint256 private _flexibleSuccesfulProjectFeePercentage;
@@ -162,10 +217,10 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	uint256 private _projectId;
 	uint256 private _minDays = 1 days;
 	uint256 private _maxDays = 365 days;
-	uint256 private _minRequestAmount = 31820000000000000 wei;
-	uint256 private _maxRequestAmount = 2968690000000000000000 wei;
-	uint256 private _minProjectInvestment = 31820000000000000 wei;
-	uint256 private _maxProjectInvestment = 2968690000000000000000 wei;
+	uint256 private _minRequestAmount = 0.03182 ether;
+	uint256 private _maxRequestAmount = 2968.69 ether;
+	uint256 private _minProjectInvestment = 0.03182 ether;
+	uint256 private _maxProjectInvestment = 2968.69 ether;
 	uint256 private _minTermLength = 5;
 	uint256 private _maxTermLength = 15;
 	uint256 private _minInterestRate = 1000;
@@ -495,12 +550,15 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		RepaymentFrequency repaymentFrequency
 	) external onlyOwner {
 		require(creator != address(0), "Invalid creator address");
-		if(
+		if (
 			requestedFunding < _minRequestAmount ||
-				requestedFunding > _maxRequestAmount
-			
-		) 
-		revert InvalidRequestedGoalAmount(requestedFunding, _minRequestAmount, _maxRequestAmount);
+			requestedFunding > _maxRequestAmount
+		)
+			revert InvalidRequestedGoalAmount(
+				requestedFunding,
+				_minRequestAmount,
+				_maxRequestAmount
+			);
 		require(
 			minInvestmentValue >= _minProjectInvestment,
 			"Invalid minimum investment value"
@@ -516,7 +574,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 				endDate <= (block.timestamp + _maxDays),
 			"Invalid end date"
 		);
-		uint256 pricePerShare = 0;
+		uint256 pricePerShare;
 		if (dealType == InvestmentDealType.Debt) {
 			require(
 				interestRate >= _minInterestRate &&
@@ -629,7 +687,10 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		// If the project is restricted to accredited investors, enforce accreditation.
 		if (project.isForAccreditedInvestor) {
 			if (!isAccreditedInvestor)
-				revert NotAccreditedInvestor(_msgSender(), isAccreditedInvestor);
+				revert NotAccreditedInvestor(
+					_msgSender(),
+					isAccreditedInvestor
+				);
 		}
 
 		if (project.dealType == InvestmentDealType.Equity) {
@@ -820,10 +881,10 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 arrayLength = projectInvestorsList[projectId].length;
 
 		// Update each investor's claim status and increment their available installments to claim
-		for (uint256 i = 0; i < arrayLength; i++) {
-			remainingInstallmentsToClaim[projectId][
+		for (uint256 i = 1; i <= arrayLength; ++i) {
+			++remainingInstallmentsToClaim[projectId][
 				projectInvestorsList[projectId][i]
-			]++;
+			];
 			hasClaimInvestment[projectId][
 				projectInvestorsList[projectId][i]
 			] = false;
@@ -1000,7 +1061,10 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		Investor storage investor = projectInvestors[projectId][_msgSender()];
 
 		// Ensure the caller is an investor in the project
-		require(hasInvested[projectId][_msgSender()], "you are not an Investor");
+		require(
+			hasInvested[projectId][_msgSender()],
+			"you are not an Investor"
+		);
 
 		// Ensure the investor has not already claimed this repayment installment
 		require(
@@ -1305,16 +1369,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			"Unable to set project status before time"
 		);
 
-
-
 		if (project.isFixedProject && project.fundingReceived > 0) {
-
 			uint256 arrayLength = projectInvestorsList[projectId].length;
-			for (
-				uint256 i = 0;
-				i < arrayLength;
-				i++
-			) {
+			for (uint256 i = 1; i <= arrayLength; ++i) {
 				investorRefundAmount[
 					projectInvestorsList[projectId][i]
 				] += projectInvestors[projectId][
@@ -1565,7 +1622,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		_minTermLength = minTermLength;
 		_maxTermLength = maxTermLength;
 
-		emit UpdatedInterestRateRange(_minTermLength, _maxInterestRate);
+		emit UpdatedTermLengthRange(_minTermLength, _maxInterestRate);
 	}
 
 	/**
@@ -1739,17 +1796,28 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			uint256 gatewayFeePercentage
 		)
 	{
+		fixedProjectFeeAmount = _fixedProjectFeeAmount;
+		fixedProjectFeePercentage = _fixedProjectFeePercentage;
+		flexibleSuccessfulProjectFeeAmount = _flexibleSuccessfulProjectFeeAmount;
+		flexibleSuccessfulProjectFeePercentage = _flexibleSuccesfulProjectFeePercentage;
+		flexibleUnsuccessfulProjectFeeAmount = _flexibleUnsuccessfulProjectFeeAmount;
+		flexibleUnsuccessfulProjectFeePercentage = _flexibleUnSuccessfulProjectFeePercentage;
+		investorFeeAmount = _investorFeeAmount;
+		investorFeePercentage = _investorFeePercentage;
+		gatewayFeeAmount = _gatewayFeeAmount;
+		gatewayFeePercentage = _gatewayFeePercentage;
+
 		return (
-			_fixedProjectFeeAmount,
-			_fixedProjectFeePercentage,
-			_flexibleSuccessfulProjectFeeAmount,
-			_flexibleSuccesfulProjectFeePercentage,
-			_flexibleUnsuccessfulProjectFeeAmount,
-			_flexibleUnSuccessfulProjectFeePercentage,
-			_investorFeeAmount,
-			_investorFeePercentage,
-			_gatewayFeeAmount,
-			_gatewayFeePercentage
+			fixedProjectFeeAmount,
+			fixedProjectFeePercentage,
+			flexibleSuccessfulProjectFeeAmount,
+			flexibleSuccessfulProjectFeePercentage,
+			flexibleUnsuccessfulProjectFeeAmount,
+			flexibleUnsuccessfulProjectFeePercentage,
+			investorFeeAmount,
+			investorFeePercentage,
+			gatewayFeeAmount,
+			gatewayFeePercentage
 		);
 	}
 
@@ -1761,7 +1829,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 *
 	 * @param _currentDate The current date in UNIX timestamp format.
 	 * @param _frequency The repayment frequency determining the interval for the next payment.
-	 * @return uint256 The calculated timestamp for the next payment date.
+	 * @return date The calculated timestamp for the next payment date.
 	 *
 	 * @dev The repayment frequency should be one of the defined enums:
 	 * RepaymentFrequency.Yearly, RepaymentFrequency.Quarterly,
@@ -1770,15 +1838,15 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	function getNextPaymentDate(
 		uint256 _currentDate,
 		RepaymentFrequency _frequency
-	) public pure returns (uint256) {
+	) public pure returns (uint256 date) {
 		if (_frequency == RepaymentFrequency.Yearly) {
-			return _currentDate + 365 days;
+			return date = _currentDate + 365 days;
 		} else if (_frequency == RepaymentFrequency.Quarterly) {
-			return _currentDate + 91 days;
+			return date = _currentDate + 91 days;
 		} else if (_frequency == RepaymentFrequency.Monthly) {
-			return _currentDate + 30 days;
+			return date = _currentDate + 30 days;
 		} else {
-			return _currentDate + 1 days;
+			return date = _currentDate + 1 days;
 		}
 	}
 
@@ -1792,7 +1860,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 * @param _isFixedProject A boolean indicating if the project is fixed or flexible.
 	 * @param projectStatus The current status of the project (Successful or Unsuccessful).
 	 * @param investorCount The number of investors involved in the project.
-	 * @return uint256 The total platform fee calculated based on the parameters provided.
+	 * @return platformfee The total platform fee calculated based on the parameters provided.
 	 *
 	 * @dev The function distinguishes between fixed and flexible projects to apply the
 	 * appropriate fee structure and calculates the total fees accordingly.
@@ -1802,7 +1870,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		bool _isFixedProject,
 		ProjectStatus projectStatus,
 		uint256 investorCount
-	) public view returns (uint256) {
+	) public view returns (uint256 platformfee) {
 		uint256 platformPercentage;
 		uint256 platformAmount;
 
@@ -1819,7 +1887,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 			}
 		}
 
-		uint256 platformfee = ((fundingReceived * platformPercentage) / 10000) +
+		 platformfee = ((fundingReceived * platformPercentage) / 10000) +
 			(platformAmount * investorCount);
 
 		return platformfee;
@@ -1834,15 +1902,15 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 *
 	 * @param fundingReceived The total amount of funding received for the project.
 	 * @param investorCount The number of investors participating in the project.
-	 * @return uint256 The total gateway fee calculated for the project.
+	 * @return gatewayFee The total gateway fee calculated for the project.
 	 *
 	 * @dev The gateway fee percentage and fixed amount are retrieved from the contract's state variables.
 	 */
 	function calculateGatewayFee(
 		uint256 fundingReceived,
 		uint256 investorCount
-	) public view returns (uint256) {
-		uint256 gatewayFee = ((fundingReceived * _gatewayFeePercentage) /
+	) public view returns (uint256 gatewayFee) {
+		 gatewayFee = ((fundingReceived * _gatewayFeePercentage) /
 			10000) + (_gatewayFeeAmount * investorCount);
 
 		return gatewayFee;
@@ -1857,14 +1925,14 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 * and a fixed fee per investor.
 	 *
 	 * @param investorShareAmount The amount of the investor's share for which the fee is being calculated.
-	 * @return uint256 The total fee charged to the investor.
+	 * @return investorFee The total fee charged to the investor.
 	 *
 	 * @dev The investor fee percentage and fixed amount are retrieved from the contract's state variables.
 	 */
 	function calculateInvestorFee(
 		uint256 investorShareAmount
-	) public view returns (uint256) {
-		uint256 investorFee = ((investorShareAmount * _investorFeePercentage) /
+	) public view returns (uint256 investorFee) {
+		 investorFee = ((investorShareAmount * _investorFeePercentage) /
 			10000) + _investorFeeAmount;
 		return investorFee;
 	}
@@ -1872,25 +1940,28 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	function calculateSellerProcessingFees(
 		uint256 totalPurchaseAmount
 	) public view returns (uint256 sellerProcessingFees) {
-		uint256 processingFees = (totalPurchaseAmount *
-			_sellerProcessingFeesPercentage) / 10000;
-		return (processingFees);
+		return
+			sellerProcessingFees =
+				(totalPurchaseAmount * _sellerProcessingFeesPercentage) /
+				10000;
 	}
 
 	function calculateSellerSuccessFees(
 		uint256 totalPurchaseAmount
 	) public view returns (uint256 sellerSuccessFees) {
-		uint256 successFees = (totalPurchaseAmount *
-			_sellerSuccessFeesPercentage) / 10000;
-		return (successFees);
+		sellerSuccessFees =
+			(totalPurchaseAmount * _sellerSuccessFeesPercentage) /
+			10000;
+		return (sellerSuccessFees);
 	}
 
 	function calculateBuyerProcessingFees(
 		uint256 totalPurchaseAmount
 	) public view returns (uint256 buyerProcessingFees) {
-		uint256 processingFees = (totalPurchaseAmount *
-			_buyerProcessingFeesPercentage) / 10000;
-		return (processingFees);
+		return
+			buyerProcessingFees =
+				(totalPurchaseAmount * _buyerProcessingFeesPercentage) /
+				10000;
 	}
 
 	/**
@@ -1898,10 +1969,12 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 * @dev This function returns the length of the `projectInvestorsList` array,
 	 * which keeps track of all investors who have invested in a specific project.
 	 * @param projectId The unique identifier of the project for which the investor count is being retrieved.
-	 * @return The number of unique investors in the specified project.
+	 * @return investorCount The number of unique investors in the specified project.
 	 */
-	function getInvestorCount(uint256 projectId) public view returns (uint256) {
-		return projectInvestorsList[projectId].length;
+	function getInvestorCount(
+		uint256 projectId
+	) external view returns (uint256 investorCount) {
+		return investorCount = projectInvestorsList[projectId].length;
 	}
 
 	/**
@@ -1915,7 +1988,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 * @param fundingReceived The total amount of funding received for the project.
 	 * @param interestRate The interest rate applicable to the funding, represented in basis points (1/100th of a percent).
 	 * @param termLength The duration of the repayment term in installments.
-	 * @return uint256 The calculated repayment installment amount.
+	 * @return repaymentAmount The calculated repayment installment amount.
 	 *
 	 * @dev The interest rate is divided by 10,000 to convert it from basis points to a decimal fraction.
 	 */
@@ -1923,8 +1996,8 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 fundingReceived,
 		uint256 interestRate,
 		uint256 termLength
-	) public pure returns (uint256) {
-		uint256 repaymentAmount = (fundingReceived +
+	) public pure returns (uint256 repaymentAmount) {
+		repaymentAmount = (fundingReceived +
 			((fundingReceived * interestRate) / 10000)) / termLength;
 
 		return repaymentAmount;
@@ -1941,7 +2014,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	 * @param totalFunding The total amount of funding received for the project.
 	 * @param investmentAmount The amount invested by the individual investor.
 	 * @param repaymentInstallmentAmount The amount to be repaid in the current installment.
-	 * @return uint256 The calculated share of the repayment installment for the investor.
+	 * @return investorShare The calculated share of the repayment installment for the investor.
 	 *
 	 * @dev The function computes the percentage of the total funding that the
 	 * investor's contribution represents, and then multiplies that percentage
@@ -1952,12 +2025,14 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		uint256 totalFunding,
 		uint256 investmentAmount,
 		uint256 repaymentInstallmentAmount
-	) public pure returns (uint256) {
-		
+	) public pure returns (uint256 investorShare) {
 		// uint256 percentage = (investmentAmount * 10000) / totalFunding; // Using 10000 to handle two decimal places
 		uint256 percentage = Math.mulDiv(investmentAmount, 10000, totalFunding); // Using 10000 to handle two decimal places
-		uint256 investorShare = Math.mulDiv(repaymentInstallmentAmount, percentage ,
-			10000);
+		investorShare = Math.mulDiv(
+			repaymentInstallmentAmount,
+			percentage,
+			10000
+		);
 		return investorShare; // This will return the percentage multiplied by 100 (for 2 decimal precision)
 	}
 
@@ -1983,9 +2058,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 	function removeInvestor(uint256 projectId, address investor) private {
 		address[] storage investors = projectInvestorsList[projectId];
 		uint256 length = investors.length;
-		bool found = false;
+		bool found;
 
-		for (uint256 i = 0; i < length; i++) {
+		for (uint256 i = 1; i <= length; ++i) {
 			if (investors[i] == investor) {
 				found = true;
 
@@ -2022,7 +2097,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		view
 		returns (uint256 minTermLength, uint256 maxTermLength)
 	{
-		return (_minTermLength, _maxTermLength);
+		minTermLength = _minTermLength;
+		maxTermLength = _maxTermLength;
+		return (minTermLength, maxTermLength);
 	}
 
 	/**
@@ -2035,7 +2112,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		view
 		returns (uint256 minInterestRate, uint256 maxInterestRate)
 	{
-		return (_minInterestRate, _maxInterestRate);
+		minInterestRate = _minInterestRate;
+		maxInterestRate = _maxInterestRate;
+		return (minInterestRate, maxInterestRate);
 	}
 
 	/**
@@ -2048,7 +2127,9 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		view
 		returns (uint256 minInvestmentValue, uint256 maxInvestmentValue)
 	{
-		return (_minProjectInvestment, _maxProjectInvestment);
+		minInvestmentValue = _minProjectInvestment;
+		maxInvestmentValue = _maxProjectInvestment;
+		return (minInvestmentValue, maxInvestmentValue);
 	}
 
 	function getGoalAmountLimit()
@@ -2056,7 +2137,10 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 		view
 		returns (uint256 minGoalAmount, uint256 maxGoalAmount)
 	{
-		return (_minRequestAmount, _maxRequestAmount);
+		minGoalAmount = _minRequestAmount;
+		maxGoalAmount = _maxRequestAmount;
+
+		return (minGoalAmount, maxGoalAmount);
 	}
 
 	function getDefenderAddress() external view returns (address) {
@@ -2065,7 +2149,7 @@ contract EquityCrowdfunding is Ownable, ReentrancyGuard {
 
 	function isSellRequestExists(
 		uint160 referenceId
-	) internal view returns (bool) {
+	) private view returns (bool) {
 		return onSellDetails[referenceId].seller != address(0);
 	}
 
